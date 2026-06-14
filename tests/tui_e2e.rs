@@ -127,10 +127,13 @@ impl Harness {
     {
         let start = std::time::Instant::now();
 
-        if let Some(ref buffer) = self.last_buffer {
-            if predicate(buffer) {
-                return true;
-            }
+        if self
+            .latest_queued_buffer()
+            .as_ref()
+            .or(self.last_buffer.as_ref())
+            .is_some_and(&mut predicate)
+        {
+            return true;
         }
 
         while start.elapsed() < timeout {
@@ -138,7 +141,10 @@ impl Harness {
                 .checked_sub(start.elapsed())
                 .unwrap_or_else(|| Duration::from_millis(1));
             match tokio::time::timeout(remaining, self.buffer_rx.recv()).await {
-                Ok(Some(buffer)) => {
+                Ok(Some(mut buffer)) => {
+                    while let Ok(newer) = self.buffer_rx.try_recv() {
+                        buffer = newer;
+                    }
                     let matched = predicate(&buffer);
                     self.last_buffer = Some(buffer);
                     if matched {
@@ -149,6 +155,17 @@ impl Harness {
             }
         }
         false
+    }
+
+    fn latest_queued_buffer(&mut self) -> Option<Buffer> {
+        let mut latest = None;
+        while let Ok(buffer) = self.buffer_rx.try_recv() {
+            latest = Some(buffer);
+        }
+        if let Some(buffer) = latest.as_ref() {
+            self.last_buffer = Some(buffer.clone());
+        }
+        latest
     }
 
     async fn quit(mut self) {
