@@ -1,0 +1,33 @@
+name: Bug report
+description: Report reproducible incorrect behavior.
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Provide the smallest reliable sequence of commands or keys.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Rivulet version
+      placeholder: rivulet 0.1.0-rc.1
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Platform and Rust version
+      placeholder: macOS 15, rustc 1.88.0
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: Remove private feed URLs, cookies, tokens, and personal data.

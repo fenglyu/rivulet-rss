@@ -1,0 +1,70 @@
+[package]
+name = "rivulet-rss"
+version = "0.1.0-rc.1"
+edition = "2021"
+rust-version = "1.88"
+authors = ["Feng Lyu"]
+description = "A terminal-first, offline-first RSS and Atom feed reader"
+license = "MIT"
+repository = "https://github.com/fenglyu/rivulet-rss"
+homepage = "https://github.com/fenglyu/rivulet-rss"
+documentation = "https://docs.rs/rivulet-rss"
+readme = "README.md"
+keywords = ["rss", "atom", "feed-reader", "terminal", "tui"]
+categories = ["command-line-utilities"]
+publish = false
+include = [
+    "/src/**",
+    "/migrations/**",
+    "/tests/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/SHORTCUTS.md",
+    "/config.sample.toml",
+    "/SECURITY.md",
+    "/CONTRIBUTING.md",
+    "/docs/INSTALL.md",
+    "/docs/USER_GUIDE.md",
+]
+
+[lib]
+name = "rivulet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rivulet"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.13", features = ["gzip", "brotli", "stream"] }
+feed-rs = "2.3"
+rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite_migration = "2.5"
+ratatui = "0.30"
+crossterm = "0.29"
+anyhow = "1.0"
+thiserror = "2.0"
+sha2 = "0.11"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.1"
+html-escape = "0.2"
+open = "5"
+dirs = "6"
+chromiumoxide = { version = "0.9", features = ["rustls", "zip8"], default-features = false }
+futures = "0.3"
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.24"
+tokio-test = "0.4"

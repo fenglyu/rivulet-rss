@@ -1,0 +1,154 @@
+# Rivulet RSS Reader - Sample Configuration
+#
+# Run `rivulet init` to create this file in the platform config directory.
+#
+# Colors can be specified as:
+# - Named colors: Black, Red, Green, Yellow, Blue, Magenta, Cyan, Gray,
+#   DarkGray, LightRed, LightGreen, LightYellow, LightBlue, LightMagenta,
+#   LightCyan, White, Reset
+# - Hex colors: "#RRGGBB" or "#RGB"
+#
+# Keybindings can be specified as:
+# - Single characters: "a", "A", "1"
+# - Special keys: Enter, Tab, BackTab, Backspace, Delete, Home, End,
+#   PageUp, PageDown, Up, Down, Left, Right, Esc, Space, F1-F12
+# - With modifiers: "Ctrl+c", "Shift+Tab", "Alt+Enter"
+
+[colors]
+# Border colors
+active_border = "Cyan"
+inactive_border = "DarkGray"
+
+# Selection highlight
+selection_bg_active = "Cyan"
+selection_fg_active = "Black"
+selection_bg_inactive = "DarkGray"
+selection_fg_inactive = "White"
+
+# Item colors
+read_item = "DarkGray"
+unread_item = "White"
+
+# Metadata colors in preview
+metadata_author = "Yellow"
+metadata_date = "Yellow"
+metadata_link = "Blue"
+
+# Status bar
+status_fg = "White"
+status_bg = "DarkGray"
+
+[keybindings]
+# Navigation
+quit = ["q", "Ctrl+c"]
+move_up = ["k", "Up"]
+move_down = ["j", "Down"]
+move_top = ["g"]
+move_bottom = ["G", "%"]
+next_page = ["n", "PageDown"]
+prev_page = ["p", "PageUp"]
+next_pane = ["Tab"]
+prev_pane = ["BackTab", "Shift+Tab"]
+# Single-key directional focus. h/l are vim-style aliases for Left/Right.
+pane_left = ["Left", "h"]
+pane_right = ["Right", "l"]
+# vim-style window chord: press, then h (left) / l (right) / Esc (cancel)
+window_chord = ["Ctrl+w"]
+
+# Actions
+select = ["Enter"]
+toggle_read = ["r"]
+toggle_star = ["s"]
+toggle_queued = ["L"]
+toggle_saved = ["S"]
+toggle_archived = ["x"]
+view_all = ["a"]
+view_unread = ["u"]
+view_starred = ["f"]
+view_queued = ["Q"]
+view_saved = ["v"]
+view_archived = ["X"]
+view_latest = ["Alt+1", "["]
+view_reader = ["Alt+2", "]"]
+open_in_browser = ["o"]
+refresh = ["R"]
+toggle_maximize = ["m"]
+toggle_feed_panel = ["\\"]
+delete_feed = ["d", "Delete"]
+
+[ui.latest]
+# Number of days included in the Latest tab
+days = 7
+
+# Maximum older recent items shown below the latest refresh batch
+limit = 200
+
+[scraper]
+# Enable automatic background scraping for new items
+enabled = true
+
+# Run browser in headless mode (no visible window)
+headless = true
+
+# Page load timeout in seconds
+timeout_secs = 30
+
+# Wait time after page load for dynamic content (milliseconds)
+wait_after_load_ms = 1000
+
+# Maximum concurrent browser pages for background scraping
+max_concurrency = 3
+
+# Maximum extracted article size in bytes (2 MiB)
+max_content_bytes = 2097152
+
+# Block images for faster loading
+block_images = true
+
+# Block stylesheets for faster loading
+block_stylesheets = true
+
+# Minimum content length (chars) to consider an item as having content
+# Items with content shorter than this will be scraped
+min_content_length = 200
+
+# CSS selectors to try for article content extraction (in priority order)
+content_selectors = [
+    "article",
+    "[role=\"main\"]",
+    "main",
+    ".post-content",
+    ".article-content",
+    ".entry-content",
+    ".content",
+    "#content",
+    ".post",
+    ".article",
+    ".blog-post",
+]
+
+# Elements to remove before extraction (ads, navigation, etc.)
+remove_selectors = [
+    "nav",
+    "header",
+    "footer",
+    "aside",
+    ".sidebar",
+    ".advertisement",
+    ".ad",
+    ".ads",
+    ".social-share",
+    ".comments",
+    ".related-posts",
+    "script",
+    "style",
+    "noscript",
+]
+
+# Optional: Custom user agent string
+# user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+# Optional: Persistent Chrome profile directory used for authenticated scraping.
+# Prefer `rivulet auth add <name> --site <url>` and `rivulet scrape --auth-profile <name>`
+# for named paid/private-site sessions.
+# user_data_dir = "/path/to/rivulet/auth-profiles/example"
