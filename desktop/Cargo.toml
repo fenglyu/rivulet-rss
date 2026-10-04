@@ -1,0 +1,39 @@
+[package]
+name = "rivulet-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "A local desktop inbox for your subscribed news sources"
+publish = false
+
+[workspace]
+
+[features]
+default = ["gui"]
+gui = ["dep:gpui", "dep:gpui-component", "dep:gpui-component-assets"]
+
+[[bin]]
+name = "rivulet-desktop"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[dependencies]
+rivulet = { package = "rivulet-rss", path = ".." }
+anyhow = "1"
+async-channel = "2"
+chrono = "0.4"
+dirs = "6"
+gpui = { version = "=0.2.2", features = ["runtime_shaders"], optional = true }
+gpui-component = { version = "=0.5.1", optional = true }
+gpui-component-assets = { version = "=0.5.1", optional = true }
+html2text = "0.17"
+mail-parser = "0.11"
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

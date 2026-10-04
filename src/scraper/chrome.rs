@@ -28,9 +28,10 @@ impl ChromeScraper {
         config.validate().map_err(RivuletError::Config)?;
 
         let mut builder = BrowserConfig::builder()
-            .arg("--disable-gpu")
-            .arg("--disable-dev-shm-usage")
-            .arg("--disable-software-rasterizer");
+            .respect_https_errors()
+            .arg("disable-gpu")
+            .arg("disable-dev-shm-usage")
+            .arg("disable-software-rasterizer");
 
         if !config.headless {
             builder = builder.with_head();
@@ -38,6 +39,9 @@ impl ChromeScraper {
 
         if let Some(ref user_data_dir) = config.user_data_dir {
             builder = builder.user_data_dir(user_data_dir);
+            if config.restore_session {
+                builder = builder.arg("restore-last-session");
+            }
         }
 
         let browser_config = builder
@@ -74,6 +78,21 @@ impl ChromeScraper {
         Self::new(ScraperConfig::default()).await
     }
 
+    /// Close our browser and wait for its profile lock to be released.
+    pub async fn close(self) -> Result<()> {
+        let mut browser = Arc::try_unwrap(self.browser)
+            .map_err(|_| RivuletError::Scraper("Browser still has active operations".into()))?;
+        timeout(self.config.timeout(), browser.close())
+            .await
+            .map_err(|_| scraper_timeout("closing the browser"))?
+            .map_err(|error| RivuletError::Scraper(format!("Browser close failed: {error}")))?;
+        timeout(self.config.timeout(), browser.wait())
+            .await
+            .map_err(|_| scraper_timeout("waiting for the browser to close"))?
+            .map_err(|error| RivuletError::Scraper(format!("Browser wait failed: {error}")))?;
+        Ok(())
+    }
+
     /// Open a page and leave it open for interactive login or inspection.
     pub async fn open_interactive_page(&self, url: &str) -> Result<()> {
         let url = parse_http_url(url)?;
@@ -92,6 +111,33 @@ impl ChromeScraper {
             .map_err(|e| RivuletError::Scraper(format!("Navigation failed: {}", e)))?;
 
         Ok(())
+    }
+
+    /// Evaluate a bounded extraction script in a normally loaded browser page.
+    /// The caller validates the final URL and the meaning of the returned content.
+    pub async fn evaluate_page(&self, url: &str, script: &str) -> Result<serde_json::Value> {
+        let url = parse_http_url(url)?;
+        let page = create_page(&self.browser, url.as_str(), &self.config).await?;
+        let result = timeout(self.config.timeout(), async {
+            page.wait_for_navigation()
+                .await
+                .map_err(|error| RivuletError::Scraper(format!("Navigation failed: {error}")))?;
+            tokio::time::sleep(self.config.wait_after_load()).await;
+            page.evaluate(script)
+                .await
+                .map_err(|error| RivuletError::Scraper(format!("Page extraction failed: {error}")))?
+                .into_value()
+                .map_err(|error| {
+                    RivuletError::Scraper(format!("Invalid page extraction result: {error:?}"))
+                })
+        })
+        .await
+        .map_err(|_| scraper_timeout("loading a subscription page"))
+        .and_then(|result| result);
+        if let Err(error) = page.close().await {
+            tracing::debug!("Failed to close browser page: {error}");
+        }
+        result
     }
 
     /// Scrape a single page and extract content

@@ -44,6 +44,10 @@ pub struct ScraperConfig {
 
     /// Optional persistent Chrome user data directory for authenticated sessions
     pub user_data_dir: Option<PathBuf>,
+
+    /// Restore cookies without an expiry when reopening a persistent profile.
+    /// Only useful for a profile dedicated to this application (default: false).
+    pub restore_session: bool,
 }
 
 impl Default for ScraperConfig {
@@ -95,6 +99,7 @@ impl Default for ScraperConfig {
                     .to_string(),
             ),
             user_data_dir: None,
+            restore_session: false,
         }
     }
 }
