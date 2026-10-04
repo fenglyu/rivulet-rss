@@ -18,6 +18,10 @@ pub enum FetchResult {
 }
 
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait generates must_use on methods returning Future"
+)]
 pub trait Fetcher {
     async fn fetch(
         &self,
