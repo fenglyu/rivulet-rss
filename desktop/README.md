@@ -23,10 +23,10 @@ open desktop/dist/Rivulet.app
 
 ## 网站订阅使用流程
 
-1. 点击新闻源的“登录账号”。应用打开该新闻源专属的可见 Chrome 窗口，你在原站输入密码、完成双重验证。
-2. 登录后点击“同步标题”。应用关闭自己的可见浏览器，等待配置目录解锁，再以同一配置目录启动 headless Chrome，读取首页当前展示的新闻链接。
+1. 点击新闻源的“登录账号”。应用打开该新闻源专属的普通 Chrome，不启用远程调试或自动化参数。你在原站输入密码、完成双重验证或原站要求的人机验证；此时自动同步暂停。
+2. 登录后退出这个专属 Chrome 实例，再点击“同步标题”。仅关闭标签或窗口可能仍让浏览器进程占用配置目录。应用不会强行关闭交互浏览器；退出后以同一配置目录启动 headless Chrome，读取首页当前展示的新闻链接。
 3. 选择新闻，点击“读取正文”。只提取当前页面可见的文章段落。标题、摘要、网页正文和需要登录的状态分开保存。
-4. 遇到登录过期、人机验证、付费提示或无法识别的正文，点击“原站打开”处理后重试。应用会保留已有正文。
+4. 遇到登录过期、人机验证、付费提示或无法识别的正文，点击“原站打开”，在普通 Chrome 中处理并退出该实例后重试。应用会保留已有正文。普通 Chrome 能登录并不保证 headless 同步不会再次被网站拦截。
 5. 首次成功同步后，该新闻源每 15 分钟刷新标题，应用须保持运行。可在连接卡片暂停；同步失败会自动暂停。
 
 三个来源使用独立 Chrome 配置目录，并在浏览器重启时恢复该目录的登录会话。应用不保存密码、不导出 Cookie，也不复用你正在使用的个人 Chrome 配置目录。需要重新在这些专属会话中登录。
@@ -52,6 +52,6 @@ cargo test --manifest-path desktop/Cargo.toml --no-default-features --locked
 cargo test --manifest-path desktop/Cargo.toml --no-default-features --test browser_smoke --locked -- --ignored
 ```
 
-浏览器测试使用本地 HTTP 测试页面及临时 Chrome 配置目录，验证 headless 页面读取、隐藏段落排除、付费墙识别，以及重启后保留会话 Cookie 和 localStorage。它不访问用户的订阅账号。
+浏览器测试使用本地 HTTP 测试页面及临时 Chrome 配置目录，验证普通登录窗口不暴露自动化标记或远程调试端口、headless 页面读取、隐藏段落排除、付费墙和机器人验证页面识别，以及重启后保留会话 Cookie 和 localStorage。它不访问用户的订阅账号或执行真实验证码。
 
 官方接入参考：[GPUI](https://gpui.rs/)、[Bloomberg 订阅者邮件](https://www.bloomberg.com/help/question/newsletters/)、[南华早报 RSS](https://www.scmp.com/rss)、[财新电邮订阅](https://corp.caixin.com/helpemailsub/)。RSS 和邮件入口不代表付费全文 API。

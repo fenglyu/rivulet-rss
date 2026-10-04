@@ -133,7 +133,7 @@ impl Worker {
                         }
                     };
                     if let Command::Shutdown(done) = command {
-                        for (_, (_, browser)) in engine.sessions.drain() { let _ = browser.close().await; }
+                        for (_, browser) in engine.sessions.drain() { let _ = browser.close().await; }
                         let _ = done.send(()).await;
                         break;
                     }
@@ -158,7 +158,7 @@ impl Worker {
                         break;
                     }
                 }
-                for (_, (_, browser)) in engine.sessions.drain() { let _ = browser.close().await; }
+                for (_, browser) in engine.sessions.drain() { let _ = browser.close().await; }
             });
         });
         Self { commands, events }
@@ -169,7 +169,8 @@ struct Engine {
     ctx: Arc<AppContext>,
     meta: Connection,
     data_dir: PathBuf,
-    sessions: HashMap<Publisher, (bool, ChromeScraper)>,
+    sessions: HashMap<Publisher, ChromeScraper>,
+    interactive_sessions: HashMap<Publisher, std::process::Child>,
     filter: Filter,
 }
 
@@ -202,6 +203,7 @@ impl Engine {
             meta,
             data_dir,
             sessions: HashMap::new(),
+            interactive_sessions: HashMap::new(),
             filter: Filter::default(),
         })
     }
@@ -213,20 +215,25 @@ impl Engine {
                 Ok("本地资料已载入".into())
             }
             Command::Login(publisher) => {
-                let browser = self.session(publisher, false).await?;
-                browser.open_interactive_page(publisher.home()).await?;
-                self.set_source_status(publisher, "登录窗口已打开 · 会话尚未验证")?;
+                self.open_user_page(publisher, publisher.home()).await?;
                 Ok(format!(
-                    "请在 Chrome 中登录 {}，完成后点击“同步标题”",
+                    "请在普通 Chrome 中登录 {}，完成后退出此专属 Chrome 实例，再点击“同步标题”",
                     publisher.name()
                 ))
             }
             Command::Sync(publisher) => {
+                if self.user_browser_running(publisher)? {
+                    self.set_auto_sync(publisher, false)?;
+                    self.set_source_status(publisher, "等待退出专属 Chrome · 同步已暂停")?;
+                    bail!(
+                        "请先在专属 Chrome 中完成登录并退出该 Chrome 实例，再同步；仅关闭标签或窗口可能仍占用会话目录"
+                    );
+                }
                 let result = self.sync(publisher).await;
                 if result.is_err() {
-                    self.set_source_status(publisher, "同步失败 · 请登录后重试")?;
+                    self.set_source_status(publisher, "后台同步暂停 · 请查看下方提示")?;
                     self.set_auto_sync(publisher, false)?;
-                    if let Some((_, browser)) = self.sessions.remove(&publisher) {
+                    if let Some(browser) = self.sessions.remove(&publisher) {
                         let _ = browser.close().await;
                     }
                 }
@@ -235,11 +242,8 @@ impl Engine {
             Command::Capture(url) => self.capture(&url).await,
             Command::OpenArticle(url) => {
                 let (publisher, url) = Publisher::from_url(&url)?;
-                self.session(publisher, false)
-                    .await?
-                    .open_interactive_page(url.as_str())
-                    .await?;
-                Ok("文章已在该新闻源的登录会话中打开".into())
+                self.open_user_page(publisher, url.as_str()).await?;
+                Ok("文章已在普通 Chrome 的专属会话中打开；后台同步已暂停，退出此 Chrome 实例后可重试".into())
             }
             Command::ImportEmails(paths) => {
                 let mut imported = 0;
@@ -342,36 +346,74 @@ impl Engine {
         Ok(())
     }
 
-    async fn session(&mut self, publisher: Publisher, headless: bool) -> Result<&ChromeScraper> {
-        if self
-            .sessions
-            .get(&publisher)
-            .is_some_and(|(mode, _)| *mode != headless)
-            && let Some((_, browser)) = self.sessions.remove(&publisher)
+    fn profile_dir(&self, publisher: Publisher) -> Result<PathBuf> {
+        let profile_dir = self.data_dir.join("profiles").join(publisher.key());
+        std::fs::create_dir_all(&profile_dir)?;
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&profile_dir, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let profile = AuthProfile::new(
+            publisher.key().into(),
+            publisher.home().into(),
+            profile_dir.to_string_lossy().into(),
+        );
+        self.ctx.store.add_auth_profile(&profile)?;
+        Ok(profile_dir)
+    }
+
+    fn user_browser_running(&mut self, publisher: Publisher) -> Result<bool> {
+        if let Some(child) = self.interactive_sessions.get_mut(&publisher) {
+            if child
+                .try_wait()
+                .context("无法确认登录浏览器是否已退出")?
+                .is_none()
+            {
+                return Ok(true);
+            }
+            self.interactive_sessions.remove(&publisher);
+        }
+        Ok(false)
+    }
+
+    async fn open_user_page(&mut self, publisher: Publisher, url: &str) -> Result<()> {
+        self.set_auto_sync(publisher, false)?;
+        if let Some(browser) = self.sessions.remove(&publisher) {
             browser
                 .close()
                 .await
-                .context("无法切换浏览器模式，请关闭该新闻源的登录窗口后重试")?;
+                .context("无法释放后台浏览器的配置目录，请重试")?;
+        }
+        let running = self.user_browser_running(publisher)?;
+        let profile_dir = self.profile_dir(publisher)?;
+        let mut child = ChromeScraper::open_user_browser(&profile_dir, url)
+            .context("无法打开普通 Chrome，请确认已安装 Chrome 或 Chromium")?;
+        if running {
+            // Chrome forwards the URL to the existing instance; retain its original handle.
+            tokio::task::spawn_blocking(move || {
+                let _ = child.wait();
+            });
+        } else {
+            self.interactive_sessions.insert(publisher, child);
+        }
+        self.set_source_status(publisher, "普通 Chrome 已打开 · 登录后请退出此实例")?;
+        Ok(())
+    }
+
+    async fn session(&mut self, publisher: Publisher) -> Result<&ChromeScraper> {
+        if self.user_browser_running(publisher)? {
+            bail!(
+                "请先在专属 Chrome 中完成登录并退出该 Chrome 实例，再同步；仅关闭标签或窗口可能仍占用会话目录"
+            );
         }
         if !self.sessions.contains_key(&publisher) {
-            let profile_dir = self.data_dir.join("profiles").join(publisher.key());
-            std::fs::create_dir_all(&profile_dir)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&profile_dir, std::fs::Permissions::from_mode(0o700))?;
-            }
-            let profile = AuthProfile::new(
-                publisher.key().into(),
-                publisher.home().into(),
-                profile_dir.to_string_lossy().into(),
-            );
-            self.ctx.store.add_auth_profile(&profile)?;
+            let profile_dir = self.profile_dir(publisher)?;
             let browser = ChromeScraper::new(ScraperConfig {
-                headless,
+                headless: true,
                 user_data_dir: Some(profile_dir),
                 restore_session: true,
+                preserve_browser_defaults: true,
                 user_agent: None,
                 block_images: false,
                 block_stylesheets: false,
@@ -381,17 +423,14 @@ impl Engine {
                 ..ScraperConfig::default()
             })
             .await
-            .context("无法打开订阅会话，请确认已安装 Chrome 或 Chromium")?;
-            self.sessions.insert(publisher, (headless, browser));
+            .context("无法打开后台订阅会话；请先退出该新闻源的专属 Chrome，确认配置目录已释放")?;
+            self.sessions.insert(publisher, browser);
         }
-        self.sessions
-            .get(&publisher)
-            .map(|(_, browser)| browser)
-            .context("无法建立本地会话")
+        self.sessions.get(&publisher).context("无法建立本地会话")
     }
 
     async fn sync(&mut self, publisher: Publisher) -> Result<String> {
-        let browser = self.session(publisher, true).await?;
+        let browser = self.session(publisher).await?;
         let value = browser
             .evaluate_page(publisher.home(), discovery_script())
             .await?;
@@ -442,7 +481,7 @@ impl Engine {
             self.ctx.store.add_item(&item)?;
             self.set_meta(&item.id, publisher, Access::Headline)?;
         }
-        let browser = self.session(publisher, true).await?;
+        let browser = self.session(publisher).await?;
         let capture: ArticleCapture = serde_json::from_value(
             browser
                 .evaluate_page(&url, &capture_script(publisher))
@@ -626,6 +665,41 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn synchronization_waits_for_user_browser_without_closing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(dir.path().join("data")).unwrap();
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        engine
+            .interactive_sessions
+            .insert(Publisher::Bloomberg, child);
+        engine.set_auto_sync(Publisher::Bloomberg, true).unwrap();
+        let result = engine.execute(Command::Sync(Publisher::Bloomberg)).await;
+        let mut child = engine
+            .interactive_sessions
+            .remove(&Publisher::Bloomberg)
+            .unwrap();
+        let still_running = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("退出该 Chrome 实例")
+        );
+        assert!(
+            still_running,
+            "synchronization must leave the user-controlled browser open"
+        );
+        assert!(!engine.auto_sync_enabled(Publisher::Bloomberg).unwrap());
+        assert!(engine.snapshot().unwrap().articles.is_empty());
+    }
 
     #[test]
     fn newsletter_import_is_persistent_deduplicated_and_searchable() {

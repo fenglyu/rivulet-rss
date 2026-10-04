@@ -170,13 +170,14 @@ impl Access {
 impl ArticleCapture {
     /// Conservative classification: an article heading or login page is never a readable body.
     pub fn access(&self) -> Access {
-        let lower = self.text.to_lowercase();
+        let lower = format!("{}\n{}", self.title, self.text).to_lowercase();
         let gate = [
             "subscribe to continue",
             "subscribe to read",
             "sign in to continue",
             "verify you are human",
             "verify you're human",
+            "are you a robot",
             "unusual activity",
             "access denied",
             "请登录后",
@@ -217,7 +218,8 @@ pub fn discovery_script() -> &'static str {
             links.push({title, url: url.href});
             if (links.length >= 300) break;
         }
-        return {url: location.href, links};
+        const blocked = /are you a robot|verify you are human|verify you're human|access denied|checking your browser/i.test(document.title + ' ' + (document.querySelector('h1')?.innerText || ''));
+        return {url: location.href, links, blocked};
     })()"#
 }
 
@@ -226,6 +228,11 @@ pub fn parse_headlines(publisher: Publisher, value: serde_json::Value) -> Result
     let (actual, _) = Publisher::from_url(page_url)?;
     if actual != publisher {
         bail!("网站跳转到了其他新闻源，请在原站完成登录");
+    }
+    if value["blocked"].as_bool().unwrap_or(false) {
+        bail!(
+            "网站拦截了后台浏览器；普通 Chrome 登录成功并不保证允许 headless 同步。请在原站阅读，或导入订阅邮件"
+        );
     }
     let links: Vec<Headline> = serde_json::from_value(value["links"].clone())?;
     let mut seen = std::collections::HashSet::new();
@@ -268,7 +275,7 @@ pub fn capture_script(publisher: Publisher) -> String {
         }}
         const restricted = Array.from(document.querySelectorAll(
             '[data-component="paywall"],[data-qa="paywall"],.paywall,.paywall-container,.subscription-wall,#paywall'
-        )).some(visible);
+        )).some(visible) || /are you a robot|verify you are human|verify you're human|access denied|checking your browser/i.test(document.title + ' ' + (document.querySelector('h1')?.innerText || ''));
         return {{
             url: location.href,
             title: document.querySelector('h1')?.innerText.trim() || meta('og:title') || document.title,
@@ -403,6 +410,17 @@ mod tests {
         assert_eq!(capture.access(), Access::Restricted);
         capture.text = "A short teaser".into();
         assert_eq!(capture.access(), Access::Headline);
+        capture.title = "Bloomberg - Are you a robot?".into();
+        assert_eq!(capture.access(), Access::Restricted);
+    }
+
+    #[test]
+    fn robot_pages_are_rejected_before_headline_import() {
+        let data = json!({"url":Publisher::Bloomberg.home(), "blocked":true, "links":[
+            {"title":"An otherwise valid link", "url":"https://www.bloomberg.com/news/articles/2026-10-04/test-story"}
+        ]});
+        let error = parse_headlines(Publisher::Bloomberg, data).unwrap_err();
+        assert!(error.to_string().contains("后台浏览器"));
     }
 
     #[test]

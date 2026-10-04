@@ -429,7 +429,7 @@ impl NewsDesk {
                         .mt_4()
                         .text_sm()
                         .text_color(rgb(MUTED))
-                        .child("第一步：点击上方“登录账号”，在原站正常登录，然后同步标题。"),
+                        .child("第一步：点击“登录账号”，在普通 Chrome 中登录；完成后退出该专属 Chrome，再同步标题。"),
                 )
                 .child(
                     div()
