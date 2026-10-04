@@ -58,6 +58,10 @@ pub struct ScrapeResult {
 
 /// Trait for web scraping implementations
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait generates must_use on methods returning Future"
+)]
 pub trait Scraper: Send + Sync {
     /// Scrape content from a URL
     async fn scrape(&self, url: &str) -> Result<ScrapeResult>;

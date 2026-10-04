@@ -1,7 +1,13 @@
-use std::sync::Arc;
+use std::{
+    ffi::OsString,
+    path::Path,
+    process::{Child, Command, Stdio},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::detection::{default_executable, DetectionOptions};
 use chromiumoxide::Page;
 use futures::StreamExt;
 use tokio::sync::Semaphore;
@@ -23,14 +29,31 @@ pub struct ChromeScraper {
 }
 
 impl ChromeScraper {
+    /// Open a user-controlled browser without CDP or automation flags.
+    /// The caller must wait for the user to exit it before reusing the profile.
+    pub fn open_user_browser(profile_dir: &Path, url: &str) -> Result<Child> {
+        let executable =
+            default_executable(DetectionOptions::default()).map_err(RivuletError::Scraper)?;
+        user_browser_command(&executable, profile_dir, url)?
+            .spawn()
+            .map_err(|error| {
+                RivuletError::Scraper(format!("Failed to open login browser: {error}"))
+            })
+    }
+
     /// Create a new Chrome scraper with the given configuration
     pub async fn new(config: ScraperConfig) -> Result<Self> {
         config.validate().map_err(RivuletError::Config)?;
 
         let mut builder = BrowserConfig::builder()
-            .arg("--disable-gpu")
-            .arg("--disable-dev-shm-usage")
-            .arg("--disable-software-rasterizer");
+            .respect_https_errors()
+            .arg("disable-gpu")
+            .arg("disable-dev-shm-usage")
+            .arg("disable-software-rasterizer");
+
+        if config.preserve_browser_defaults {
+            builder = builder.disable_default_args().arg("no-first-run");
+        }
 
         if !config.headless {
             builder = builder.with_head();
@@ -38,6 +61,9 @@ impl ChromeScraper {
 
         if let Some(ref user_data_dir) = config.user_data_dir {
             builder = builder.user_data_dir(user_data_dir);
+            if config.restore_session {
+                builder = builder.arg("restore-last-session");
+            }
         }
 
         let browser_config = builder
@@ -74,6 +100,21 @@ impl ChromeScraper {
         Self::new(ScraperConfig::default()).await
     }
 
+    /// Close our browser and wait for its profile lock to be released.
+    pub async fn close(self) -> Result<()> {
+        let mut browser = Arc::try_unwrap(self.browser)
+            .map_err(|_| RivuletError::Scraper("Browser still has active operations".into()))?;
+        timeout(self.config.timeout(), browser.close())
+            .await
+            .map_err(|_| scraper_timeout("closing the browser"))?
+            .map_err(|error| RivuletError::Scraper(format!("Browser close failed: {error}")))?;
+        timeout(self.config.timeout(), browser.wait())
+            .await
+            .map_err(|_| scraper_timeout("waiting for the browser to close"))?
+            .map_err(|error| RivuletError::Scraper(format!("Browser wait failed: {error}")))?;
+        Ok(())
+    }
+
     /// Open a page and leave it open for interactive login or inspection.
     pub async fn open_interactive_page(&self, url: &str) -> Result<()> {
         let url = parse_http_url(url)?;
@@ -94,10 +135,56 @@ impl ChromeScraper {
         Ok(())
     }
 
+    /// Evaluate a bounded extraction script in a normally loaded browser page.
+    /// The caller validates the final URL and the meaning of the returned content.
+    pub async fn evaluate_page(&self, url: &str, script: &str) -> Result<serde_json::Value> {
+        let url = parse_http_url(url)?;
+        let page = create_page(&self.browser, url.as_str(), &self.config).await?;
+        let result = timeout(self.config.timeout(), async {
+            page.wait_for_navigation()
+                .await
+                .map_err(|error| RivuletError::Scraper(format!("Navigation failed: {error}")))?;
+            tokio::time::sleep(self.config.wait_after_load()).await;
+            page.evaluate(script)
+                .await
+                .map_err(|error| RivuletError::Scraper(format!("Page extraction failed: {error}")))?
+                .into_value()
+                .map_err(|error| {
+                    RivuletError::Scraper(format!("Invalid page extraction result: {error:?}"))
+                })
+        })
+        .await
+        .map_err(|_| scraper_timeout("loading a subscription page"))
+        .and_then(|result| result);
+        if let Err(error) = page.close().await {
+            tracing::debug!("Failed to close browser page: {error}");
+        }
+        result
+    }
+
     /// Scrape a single page and extract content
     async fn scrape_page(&self, url: &str) -> Result<ScrapeResult> {
         scrape_browser_page(&self.browser, &self.config, &self.extractor, url).await
     }
+}
+
+fn user_browser_command(executable: &Path, profile_dir: &Path, url: &str) -> Result<Command> {
+    let url = parse_http_url(url)?;
+    let mut profile_arg = OsString::from("--user-data-dir=");
+    profile_arg.push(profile_dir);
+    let mut command = Command::new(executable);
+    command
+        .args([
+            profile_arg,
+            "--restore-last-session".into(),
+            "--new-window".into(),
+            "--no-first-run".into(),
+        ])
+        .arg(url.as_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    Ok(command)
 }
 
 #[async_trait]
@@ -277,7 +364,45 @@ fn scraper_timeout(action: &str) -> RivuletError {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_utf8;
+    use super::{truncate_utf8, user_browser_command};
+    use std::path::Path;
+
+    #[test]
+    fn login_uses_an_isolated_profile_without_browser_automation() {
+        let profile = Path::new("profiles with spaces/bloomberg");
+        let command =
+            user_browser_command(Path::new("chrome"), profile, "https://www.bloomberg.com/")
+                .unwrap();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"--user-data-dir=profiles with spaces/bloomberg".into()));
+        assert_eq!(args.last().unwrap(), "https://www.bloomberg.com/");
+        for flag in [
+            "remote-debugging",
+            "enable-automation",
+            "headless",
+            "disable-blink-features",
+            "password-store",
+            "use-mock-keychain",
+        ] {
+            assert!(
+                !args.iter().any(|arg| arg.contains(flag)),
+                "unexpected login flag: {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn login_rejects_non_web_navigation() {
+        assert!(user_browser_command(
+            Path::new("chrome"),
+            Path::new("profile"),
+            "javascript:alert(1)"
+        )
+        .is_err());
+    }
 
     #[test]
     fn truncates_content_on_a_utf8_boundary() {

@@ -1,5 +1,8 @@
 # Rivulet RSS
 
+A macOS GPUI desktop prototype for subscribed Bloomberg, Caixin and SCMP news
+is available in [desktop/README.md](desktop/README.md).
+
 Rivulet RSS is a terminal-first, offline-first RSS and Atom reader written in
 Rust. The Cargo package is `rivulet-rss`; the installed command is `rivulet`.
 
